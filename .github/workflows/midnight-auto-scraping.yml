@@ -1,0 +1,591 @@
+name: Midnight Auto Scraping (All Sports)
+
+on:
+  schedule:
+    # Codziennie o 22:00 UTC = 00:00 czasu polskiego (UTC+2 latem)
+    # Zbiera mecze NA KOLEJNY DZIEŃ (np. o północy 25.10 zbiera na 25.10)
+    - cron: '0 22 * * *'
+  
+  # Możliwość ręcznego uruchomienia (zakładka Actions na GitHub)
+  workflow_dispatch:
+
+jobs:
+  # ⚽ FOOTBALL
+  football:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 godzin (maksimum GitHub Actions) dla 2500+ meczów
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 🌐 Install Chrome & ChromeDriver
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+    
+    - name: 📦 Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: ⚽ Run Football Scraping
+      run: |
+        # Użyj timezone polskiego (Europe/Warsaw) zamiast UTC
+        TODAY=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+        echo "🗓️ Scraping Football dla daty: $TODAY"
+        
+        # Mail 1: Zdarzenia z przewagą formy + kursy
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 1/2: Zdarzenia z PRZEWAGĄ FORMY + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports football \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-form-advantage \
+          --skip-no-odds || echo "⚠️ Mail 1 zakończył się błędem (może brak zdarzeń)"
+        
+        # Poczekaj 10 sekund między mailami
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 2..."
+        sleep 10
+        
+        # Mail 2: Wszystkie kwalifikujące się zdarzenia z kursami
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 2/2: WSZYSTKIE KWALIFIKUJĄCE + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports football \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --skip-no-odds || echo "⚠️ Mail 2 zakończył się błędem (może brak zdarzeń)"
+        
+        # Poczekaj 10 sekund przed Mail 3
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 3..."
+        sleep 10
+        
+        # Mail 3: Over/Under Statistics
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 3/3: OVER/UNDER STATISTICS"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports football \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-over-under \
+          --skip-no-odds || echo "⚠️ Mail 3 zakończył się błędem (może brak zdarzeń)"
+        
+        echo ""
+        echo "✅ Football scraping zakończony (3 maile wysłane)!"
+      
+      env:
+        DISPLAY: ':99'
+    
+    - name: 📊 Upload Football outputs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: football-results-${{ github.run_number }}
+        path: outputs/*football*.csv
+        if-no-files-found: ignore
+        retention-days: 30
+
+  # 🏀 BASKETBALL
+  basketball:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 godzin (maksimum GitHub Actions) dla 2500+ meczów
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 🌐 Install Chrome & ChromeDriver
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+    
+    - name: 📦 Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🏀 Run Basketball Scraping
+      run: |
+        # Użyj timezone polskiego (Europe/Warsaw) zamiast UTC
+        TODAY=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+        echo "🗓️ Scraping Basketball dla daty: $TODAY"
+        
+        # Mail 1: Zdarzenia z przewagą formy + kursy
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 1/2: Zdarzenia z PRZEWAGĄ FORMY + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports basketball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-form-advantage \
+          --skip-no-odds || echo "⚠️ Mail 1 zakończył się błędem (może brak zdarzeń)"
+        
+        # Poczekaj 10 sekund między mailami
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 2..."
+        sleep 10
+        
+        # Mail 2: Wszystkie kwalifikujące się zdarzenia z kursami
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 2/2: WSZYSTKIE KWALIFIKUJĄCE + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports basketball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --skip-no-odds || echo "⚠️ Mail 2 zakończył się błędem (może brak zdarzeń)"
+        
+        # Mail 3: Over/Under Statistics
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 3..."
+        sleep 10
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 3/3: OVER/UNDER STATISTICS"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports basketball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-over-under \
+          --skip-no-odds || echo "⚠️ Mail 3 zakończył się błędem (może brak zdarzeń)"
+        
+        echo ""
+        echo "✅ Basketball scraping zakończony (3 maile)!"
+      
+      env:
+        DISPLAY: ':99'
+    
+    - name: 📊 Upload Basketball outputs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: basketball-results-${{ github.run_number }}
+        path: outputs/*basketball*.csv
+        if-no-files-found: ignore
+        retention-days: 30
+
+  # 🤾 HANDBALL
+  handball:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 godzin (maksimum GitHub Actions) dla 2500+ meczów
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 🌐 Install Chrome & ChromeDriver
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+    
+    - name: 📦 Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🤾 Run Handball Scraping
+      run: |
+        # Użyj timezone polskiego (Europe/Warsaw) zamiast UTC
+        TODAY=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+        echo "🗓️ Scraping Handball dla daty: $TODAY"
+        
+        # Mail 1: Zdarzenia z przewagą formy + kursy
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 1/2: Zdarzenia z PRZEWAGĄ FORMY + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports handball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-form-advantage \
+          --skip-no-odds || echo "⚠️ Mail 1 zakończył się błędem (może brak zdarzeń)"
+        
+        # Poczekaj 10 sekund między mailami
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 2..."
+        sleep 10
+        
+        # Mail 2: Wszystkie kwalifikujące się zdarzenia z kursami
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 2/2: WSZYSTKIE KWALIFIKUJĄCE + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports handball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --skip-no-odds || echo "⚠️ Mail 2 zakończył się błędem (może brak zdarzeń)"
+        
+        # Mail 3: Over/Under Statistics
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 3..."
+        sleep 10
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 3/3: OVER/UNDER STATISTICS"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports handball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-over-under \
+          --skip-no-odds || echo "⚠️ Mail 3 zakończył się błędem (może brak zdarzeń)"
+        
+        echo ""
+        echo "✅ Handball scraping zakończony (3 maile)!"
+      
+      env:
+        DISPLAY: ':99'
+    
+    - name: 📊 Upload Handball outputs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: handball-results-${{ github.run_number }}
+        path: outputs/*handball*.csv
+        if-no-files-found: ignore
+        retention-days: 30
+
+  # 🏐 VOLLEYBALL
+  volleyball:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 godzin (maksimum GitHub Actions) dla 2500+ meczów
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 🌐 Install Chrome & ChromeDriver
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+    
+    - name: 📦 Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🏐 Run Volleyball Scraping
+      run: |
+        # Użyj timezone polskiego (Europe/Warsaw) zamiast UTC
+        TODAY=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+        echo "🗓️ Scraping Volleyball dla daty: $TODAY"
+        
+        # Mail 1: Zdarzenia z przewagą formy + kursy
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 1/2: Zdarzenia z PRZEWAGĄ FORMY + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports volleyball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-form-advantage \
+          --skip-no-odds || echo "⚠️ Mail 1 zakończył się błędem (może brak zdarzeń)"
+        
+        # Poczekaj 10 sekund między mailami
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 2..."
+        sleep 10
+        
+        # Mail 2: Wszystkie kwalifikujące się zdarzenia z kursami
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 2/2: WSZYSTKIE KWALIFIKUJĄCE + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports volleyball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --skip-no-odds || echo "⚠️ Mail 2 zakończył się błędem (może brak zdarzeń)"
+        
+        # Mail 3: Over/Under Statistics
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 3..."
+        sleep 10
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 3/3: OVER/UNDER STATISTICS"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports volleyball \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-over-under \
+          --skip-no-odds || echo "⚠️ Mail 3 zakończył się błędem (może brak zdarzeń)"
+        
+        echo ""
+        echo "✅ Volleyball scraping zakończony (3 maile)!"
+      
+      env:
+        DISPLAY: ':99'
+    
+    - name: 📊 Upload Volleyball outputs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: volleyball-results-${{ github.run_number }}
+        path: outputs/*volleyball*.csv
+        if-no-files-found: ignore
+        retention-days: 30
+
+  # 🏒 HOCKEY
+  hockey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 godzin (maksimum GitHub Actions) dla 2500+ meczów
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 🌐 Install Chrome & ChromeDriver
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+    
+    - name: 📦 Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🏒 Run Hockey Scraping
+      run: |
+        # Użyj timezone polskiego (Europe/Warsaw) zamiast UTC
+        TODAY=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+        echo "🗓️ Scraping Hockey dla daty: $TODAY"
+        
+        # Mail 1: Zdarzenia z przewagą formy + kursy
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 1/2: Zdarzenia z PRZEWAGĄ FORMY + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports hockey \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-form-advantage \
+          --skip-no-odds || echo "⚠️ Mail 1 zakończył się błędem (może brak zdarzeń)"
+        
+        # Poczekaj 10 sekund między mailami
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 2..."
+        sleep 10
+        
+        # Mail 2: Wszystkie kwalifikujące się zdarzenia z kursami
+        echo ""
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 2/2: WSZYSTKIE KWALIFIKUJĄCE + KURSY"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports hockey \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --skip-no-odds || echo "⚠️ Mail 2 zakończył się błędem (może brak zdarzeń)"
+        
+        # Mail 3: Over/Under Statistics
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 3..."
+        sleep 10
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 3/3: OVER/UNDER STATISTICS"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports hockey \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-over-under \
+          --skip-no-odds || echo "⚠️ Mail 3 zakończył się błędem (może brak zdarzeń)"
+        
+        echo ""
+        echo "✅ Hockey scraping zakończony (3 maile)!"
+      
+      env:
+        DISPLAY: ':99'
+    
+    - name: 📊 Upload Hockey outputs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: hockey-results-${{ github.run_number }}
+        path: outputs/*hockey*.csv
+        if-no-files-found: ignore
+        retention-days: 30
+
+  # 🎾 TENNIS
+  tennis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 godzin (maksimum GitHub Actions) dla 2500+ meczów
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 🌐 Install Chrome & ChromeDriver
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+    
+    - name: 📦 Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🎾 Run Tennis Scraping
+      run: |
+        # Użyj timezone polskiego (Europe/Warsaw) zamiast UTC
+        TODAY=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+        echo "🗓️ Scraping Tennis dla daty: $TODAY"
+        
+        # Mail 1: Standard kwalifikujące (advanced scoring)
+        echo "📧 MAIL 1/2: Zdarzenia tenisowe z kursami..."
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports tennis \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --skip-no-odds || echo "⚠️ Mail 1 zakończył się błędem (może brak zdarzeń)"
+        
+        # Mail 2: Over/Under Statistics (setów)
+        echo ""
+        echo "⏳ Czekam 10 sekund przed wysłaniem mail 2..."
+        sleep 10
+        echo "═══════════════════════════════════════════════════════════"
+        echo "📧 MAIL 2/2: OVER/UNDER STATISTICS (sety)"
+        echo "═══════════════════════════════════════════════════════════"
+        python scrape_and_notify.py \
+          --date $TODAY \
+          --sports tennis \
+          --to jakub.majka.zg@gmail.com \
+          --from-email jakub.majka.zg@gmail.com \
+          --password "${{ secrets.EMAIL_PASSWORD }}" \
+          --headless \
+          --sort time \
+          --only-over-under \
+          --skip-no-odds || echo "⚠️ Mail 2 zakończył się błędem (może brak zdarzeń)"
+        
+        echo ""
+        echo "✅ Tennis scraping zakończony (2 maile)!"
+      
+      env:
+        DISPLAY: ':99'
+    
+    - name: 📊 Upload Tennis outputs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tennis-results-${{ github.run_number }}
+        path: outputs/*tennis*.csv
+        if-no-files-found: ignore
+        retention-days: 30
+
