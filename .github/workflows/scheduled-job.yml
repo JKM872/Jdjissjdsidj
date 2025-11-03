@@ -6,8 +6,19 @@ on:
     # Format: minute hour day_of_month month day_of_week
     - cron: '0 2 * * *'
   
-  # Allow manual trigger
+  # Allow manual trigger with mode selection
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Tryb analizy (Analysis mode)'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both           # Gospodarze + Goście (2 emaile)
+          - home-only      # Tylko gospodarze
+          - away-only      # Tylko goście
+          - combined       # Home+Away w jednym emailu
 
 jobs:
   scheduled-task:
@@ -17,8 +28,49 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Run scheduled task
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
         run: |
-          echo "Workflow triggered at 2:00 UTC"
-          echo "Current time: $(date)"
-          # Add your job steps here
+          pip install -r requirements.txt
+      
+      - name: "Run scheduled task"
+        run: |
+          echo "🚀 Rozpoczynam scraping..."
+          echo "📅 Data: $(date)"
+          echo "🎯 Tryb: ${{ github.event.inputs.mode || 'both' }}"
+          
+          # Ustaw flagę na podstawie trybu
+          MODE="${{ github.event.inputs.mode }}"
+          FLAGS=""
+          
+          if [ "$MODE" = "home-only" ]; then
+            FLAGS="--home-only"
+            echo "🏠 Tryb: TYLKO GOSPODARZE"
+          elif [ "$MODE" = "away-only" ]; then
+            FLAGS="--away-only"
+            echo "👥 Tryb: TYLKO GOŚCIE"
+          elif [ "$MODE" = "combined" ]; then
+            FLAGS="--combined-email"
+            echo "📧 Tryb: JEDEN EMAIL (home+away)"
+          else
+            echo "🏠👥 Tryb: OBAJ (2 osobne emaile)"
+          fi
+          
+          # Uruchom scraper
+          python scrape_and_notify.py \
+            --date $(date +%Y-%m-%d) \
+            --sports volleyball basketball handball \
+            --to ${{ secrets.EMAIL_TO }} \
+            --from-email ${{ secrets.EMAIL_FROM }} \
+            --password ${{ secrets.SMTP_PASSWORD }} \
+            --provider gmail \
+            --headless \
+            $FLAGS
+        env:
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}

@@ -1,6 +1,6 @@
 """
 SKRYPT AUTOMATYCZNY: Scrapuje mecze i wysyła powiadomienie email
-WERSJA 2.0: z Cache + Adaptive Throttling dla szybszego działania
+WERSJA 2.1: z Cache + Adaptive Throttling + Tryb GOŚĆ (AWAY)
 """
 
 import argparse
@@ -16,6 +16,31 @@ from email_notifier import send_email_notification
 from app_integrator import AppIntegrator, create_integrator_from_config
 import pandas as pd
 import time
+
+
+# ============================================================================
+# KONFIGURACJA ANALIZY - GOSPODARZE vs GOŚCIE
+# ============================================================================
+
+ANALYZE_HOME_TEAM = True      # Analizuj gospodarzy (focus_team='home')
+ANALYZE_AWAY_TEAM = True      # Analizuj gości (focus_team='away')
+SEND_SEPARATE_EMAILS = True   # Osobne maile dla home/away (jeśli False - jeden email)
+
+# Warunki kwalifikacji dla GOSPODARZY
+HOME_TEAM_REQUIREMENTS = {
+    'min_h2h_wins': 4,           # Minimum wygrane w H2H (ostatnie 5 meczów)
+    'min_win_rate': 0.8,         # Minimum wskaźnik wygranych (80%)
+    'min_h2h_count': 5,          # Minimum meczów H2H do analizy
+    'require_form_advantage': False  # Czy wymuszać przewagę formy
+}
+
+# Warunki kwalifikacji dla GOŚCI (mogą być inne!)
+AWAY_TEAM_REQUIREMENTS = {
+    'min_h2h_wins': 3,           # Łatwiej dla gości (3 zamiast 4)
+    'min_win_rate': 0.6,         # Łatwiej dla gości (60% zamiast 80%)
+    'min_h2h_count': 3,          # Minimum meczów H2H
+    'require_form_advantage': False  # Czy wymuszać przewagę formy
+}
 
 
 # ============================================================================
@@ -100,6 +125,93 @@ def calculate_adaptive_delay(success_rate: float, error_count: int, base_delay: 
     return base_delay
 
 
+# ============================================================================
+# FUNKCJE KWALIFIKACJI - OSOBNE DLA GOSPODARZY I GOŚCI
+# ============================================================================
+
+def should_qualify_home_team(row: dict) -> bool:
+    """
+    Sprawdza czy drużyna GOSPODARZY kwalifikuje się do typu
+    
+    Args:
+        row: Słownik z danymi meczu (H2H, forma, kursy itp.)
+    
+    Returns:
+        True jeśli gospodarz kwalifikuje się
+    """
+    requirements = HOME_TEAM_REQUIREMENTS
+    
+    # Pobierz dane
+    home_wins = row.get('home_wins_in_h2h_last5', 0)
+    h2h_count = row.get('h2h_count', 0)
+    
+    # Oblicz win_rate
+    win_rate = home_wins / h2h_count if h2h_count > 0 else 0
+    
+    # Sprawdzenia
+    if home_wins < requirements['min_h2h_wins']:
+        return False
+    
+    if win_rate < requirements['min_win_rate']:
+        return False
+    
+    if h2h_count < requirements['min_h2h_count']:
+        return False
+    
+    # Opcjonalnie: wymaga przewagi formy
+    if requirements['require_form_advantage']:
+        home_form = row.get('home_form', [])
+        away_form = row.get('away_form', [])
+        home_form_score = sum(1 for x in home_form if x == 'W')
+        away_form_score = sum(1 for x in away_form if x == 'W')
+        if home_form_score <= away_form_score:
+            return False
+    
+    return True
+
+
+def should_qualify_away_team(row: dict) -> bool:
+    """
+    Sprawdza czy drużyna GOŚCI kwalifikuje się do typu
+    MOŻE MIEĆ INNE WYMAGANIA NIŻ GOSPODARZE!
+    
+    Args:
+        row: Słownik z danymi meczu (H2H, forma, kursy itp.)
+    
+    Returns:
+        True jeśli gość kwalifikuje się
+    """
+    requirements = AWAY_TEAM_REQUIREMENTS
+    
+    # Pobierz dane (dla gości liczymy away_wins)
+    away_wins = row.get('away_wins_in_h2h_last5', 0)
+    h2h_count = row.get('h2h_count', 0)
+    
+    # Oblicz win_rate dla gości
+    win_rate = away_wins / h2h_count if h2h_count > 0 else 0
+    
+    # Sprawdzenia
+    if away_wins < requirements['min_h2h_wins']:
+        return False
+    
+    if win_rate < requirements['min_win_rate']:
+        return False
+    
+    if h2h_count < requirements['min_h2h_count']:
+        return False
+    
+    # Opcjonalnie: wymaga przewagi formy
+    if requirements['require_form_advantage']:
+        home_form = row.get('home_form', [])
+        away_form = row.get('away_form', [])
+        home_form_score = sum(1 for x in home_form if x == 'W')
+        away_form_score = sum(1 for x in away_form if x == 'W')
+        if away_form_score <= home_form_score:  # Odwrotnie niż dla home
+            return False
+    
+    return True
+
+
 def scrape_and_send_email(
     date: str,
     sports: list,
@@ -169,7 +281,8 @@ def scrape_and_send_email(
         print(f"\n🔄 KROK 2/3: Przetwarzanie {len(urls)} meczów...")
         print("="*70)
         
-        rows = []
+        rows = []          # Lista meczów kwalifikujących dla GOSPODARZY
+        away_rows = []     # 🆕 Lista meczów kwalifikujących dla GOŚCI
         qualifying_count = 0
         
         # ✨ NOWE: Statystyki dla adaptive throttling i cache
@@ -259,42 +372,63 @@ def scrape_and_send_email(
                         success = True  # Sukces, wyjdź z retry loop
                     
                     else:
-                        # Sporty drużynowe
-                        info = process_match(url, driver, away_team_focus=away_team_focus)
-                        rows.append(info)
+                        # Sporty drużynowe - ANALIZA DUAL (HOME + AWAY)
+                        info = process_match(url, driver, away_team_focus=False)  # Zawsze pobierz pełne dane
                         
-                        if info['qualifies']:
+                        # ========== ANALIZA DLA GOSPODARZY ==========
+                        info['focus_team'] = 'home'
+                        home_qualifies = should_qualify_home_team(info) if ANALYZE_HOME_TEAM else False
+                        
+                        if home_qualifies:
+                            home_row = info.copy()
+                            home_row['qualifies'] = True
+                            rows.append(home_row)
                             qualifying_count += 1
+                            
                             h2h_count = info.get('h2h_count', 0)
-                            win_rate = info.get('win_rate', 0.0)
+                            win_rate = info['home_wins_in_h2h_last5'] / h2h_count if h2h_count > 0 else 0
                             home_form = info.get('home_form', [])
                             away_form = info.get('away_form', [])
                             
                             home_form_str = '-'.join(home_form) if home_form else 'N/A'
                             away_form_str = '-'.join(away_form) if away_form else 'N/A'
                             
-                            # Wybierz co pokazać w zależności od trybu
-                            if away_team_focus:
-                                wins_count = info.get('away_wins_in_h2h_last5', 0)
-                                focused_team = info['away_team']
-                            else:
-                                wins_count = info['home_wins_in_h2h_last5']
-                                focused_team = info['home_team']
-                            
-                            print(f"   ✅ KWALIFIKUJE! {info['home_team']} vs {info['away_team']}")
-                            print(f"      Fokus: {focused_team}")
-                            print(f"      H2H: {wins_count}/{h2h_count} ({win_rate*100:.0f}%)")
+                            print(f"   🏠 GOSPODARZE: KWALIFIKUJE! {info['home_team']} vs {info['away_team']}")
+                            print(f"      H2H: {info['home_wins_in_h2h_last5']}/{h2h_count} ({win_rate*100:.0f}%)")
                             if home_form or away_form:
                                 print(f"      Forma: {info['home_team']} [{home_form_str}] | {info['away_team']} [{away_form_str}]")
-                        else:
+                        
+                        # ========== ANALIZA DLA GOŚCI ==========
+                        info['focus_team'] = 'away'
+                        away_qualifies = should_qualify_away_team(info) if ANALYZE_AWAY_TEAM else False
+                        
+                        if away_qualifies:
+                            away_row = info.copy()
+                            away_row['qualifies'] = True
+                            away_rows.append(away_row)
+                            qualifying_count += 1
+                            
                             h2h_count = info.get('h2h_count', 0)
-                            win_rate = info.get('win_rate', 0.0)
+                            away_wins = info.get('away_wins_in_h2h_last5', 0)
+                            win_rate = away_wins / h2h_count if h2h_count > 0 else 0
+                            home_form = info.get('home_form', [])
+                            away_form = info.get('away_form', [])
+                            
+                            home_form_str = '-'.join(home_form) if home_form else 'N/A'
+                            away_form_str = '-'.join(away_form) if away_form else 'N/A'
+                            
+                            print(f"   👥 GOŚCIE: KWALIFIKUJE! {info['away_team']} @ {info['home_team']}")
+                            print(f"      H2H: {away_wins}/{h2h_count} ({win_rate*100:.0f}%)")
+                            if home_form or away_form:
+                                print(f"      Forma: {info['home_team']} [{home_form_str}] | {info['away_team']} [{away_form_str}]")
+                        
+                        # ========== ŻADEN NIE KWALIFIKUJE ==========
+                        if not home_qualifies and not away_qualifies:
+                            h2h_count = info.get('h2h_count', 0)
+                            home_wins = info.get('home_wins_in_h2h_last5', 0)
+                            away_wins = info.get('away_wins_in_h2h_last5', 0)
                             if h2h_count > 0:
-                                if away_team_focus:
-                                    wins_count = info.get('away_wins_in_h2h_last5', 0)
-                                else:
-                                    wins_count = info['home_wins_in_h2h_last5']
-                                print(f"   ❌ Nie kwalifikuje ({wins_count}/{h2h_count} = {win_rate*100:.0f}%)")
+                                print(f"   ❌ Nie kwalifikuje (DOM: {home_wins}/{h2h_count}, GOŚĆ: {away_wins}/{h2h_count})")
                             else:
                                 print(f"   ⚠️  Brak H2H")
                         
@@ -371,15 +505,17 @@ def scrape_and_send_email(
         print("📊 STATYSTYKI SCRAPINGU")
         print("="*70)
         print(f"⏱️  Całkowity czas: {elapsed_time / 60:.1f} minut")
-        print(f"📦 Meczów ogółem: {len(rows)}")
-        print(f"✅ Kwalifikujących: {qualifying_count}")
+        print(f"📦 Meczów przetworzonych: {len(urls)}")
+        print(f"🏠 Gospodarze kwalifikują: {len(rows)}")
+        print(f"👥 Goście kwalifikują: {len(away_rows)}")
+        print(f"✅ Łącznie kwalifikujących: {len(rows) + len(away_rows)}")
         print(f"💾 Cache hits: {cache_hits} ({cache_hits/len(urls)*100 if len(urls) > 0 else 0:.0f}% - zaoszczędzono czas!)")
         print(f"⚠️  Błędów: {error_count}")
         print(f"⚡ Średni delay: {avg_delay:.2f}s (bazowy: 0.8s)")
         print(f"🚀 Przyspieszenie: ~{((1.0 - avg_delay) / 1.0 * 100) if avg_delay < 1.0 else 0:.0f}% szybciej niż standardowo")
         print("="*70)
         
-        # Zapisz finalne wyniki (plik już istnieje jeśli były checkpointy)
+        # Zapisz finalne wyniki dla GOSPODARZY
         print("\n💾 Zapisywanie finalnych wyników...")
         
         df = pd.DataFrame(rows)
@@ -387,41 +523,48 @@ def scrape_and_send_email(
             df['h2h_last5'] = df['h2h_last5'].apply(lambda x: str(x) if x else '')
         
         df.to_csv(outfn, index=False, encoding='utf-8-sig')
-        print(f"✅ Zapisano do: {outfn}")
+        print(f"✅ GOSPODARZE zapisani do: {outfn}")
+        
+        # Zapisz wyniki dla GOŚCI
+        if away_rows:
+            away_outfn = outfn.replace('.csv', '_AWAY.csv')
+            df_away = pd.DataFrame(away_rows)
+            if 'h2h_last5' in df_away.columns:
+                df_away['h2h_last5'] = df_away['h2h_last5'].apply(lambda x: str(x) if x else '')
+            
+            df_away.to_csv(away_outfn, index=False, encoding='utf-8-sig')
+            print(f"✅ GOŚCIE zapisani do: {away_outfn}")
         
         # Zapisz przewidywania do JSON (dla późniejszej weryfikacji)
-        if qualifying_count > 0:
-            predictions_file = outfn.replace('.csv', '_predictions.json')
-            qualifying_rows = [r for r in rows if r.get('qualifies', False)]
-            
+        qualifying_count = len(rows) + len(away_rows)
+        
+        if len(rows) > 0:
+            predictions_file = outfn.replace('.csv', '_predictions_HOME.json')
             with open(predictions_file, 'w', encoding='utf-8') as f:
-                json.dump(qualifying_rows, f, ensure_ascii=False, indent=2)
-            print(f"✅ Przewidywania zapisane do: {predictions_file}")
+                json.dump(rows, f, ensure_ascii=False, indent=2)
+            print(f"✅ Przewidywania GOSPODARZY: {predictions_file}")
+        
+        if len(away_rows) > 0:
+            predictions_file_away = outfn.replace('.csv', '_predictions_AWAY.json')
+            with open(predictions_file_away, 'w', encoding='utf-8') as f:
+                json.dump(away_rows, f, ensure_ascii=False, indent=2)
+            print(f"✅ Przewidywania GOŚCI: {predictions_file_away}")
         
         # Podsumowanie scrapingu
         print("\n📊 PODSUMOWANIE SCRAPINGU:")
-        print(f"   Przetworzono: {len(rows)} meczów")
-        print(f"   Kwalifikujących się: {qualifying_count}")
-        if rows:
-            percent = (qualifying_count / len(rows)) * 100
-            print(f"   Procent: {percent:.1f}%")
+        print(f"   Przetworzono: {len(urls)} meczów")
+        print(f"   🏠 Gospodarze: {len(rows)}")
+        print(f"   👥 Goście: {len(away_rows)}")
+        print(f"   ✅ Łącznie: {qualifying_count}")
         
-        # KROK 3: Wyślij email (tylko jeśli są kwalifikujące się mecze)
-        if qualifying_count > 0:
-            print(f"\n📧 KROK 3/4: Wysyłanie powiadomienia email...")
+        # ========== KROK 3: WYŚLIJ EMAILE ==========
+        
+        # EMAIL 1: GOSPODARZE
+        if len(rows) > 0:
+            print(f"\n📧 KROK 3A/4: Wysyłanie emaila - GOSPODARZE 🏠...")
             print("="*70)
             
-            # Buduj tytuł emaila dynamicznie
-            subject_parts = []
-            if only_form_advantage:
-                subject_parts.append("🔥 PRZEWAGA FORMY")
-            if skip_no_odds:
-                subject_parts.append("💰 Z KURSAMI")
-            
-            if subject_parts:
-                subject = f"Mecze ({' + '.join(subject_parts)}) - {date}"
-            else:
-                subject = f"🏆 {qualifying_count} kwalifikujących się meczów - {date}"
+            subject = f"[GOSPODARZE 🏠] {len(rows)} kwalifikujących się meczów - {date}"
             
             send_email_notification(
                 csv_file=outfn,
@@ -436,19 +579,43 @@ def scrape_and_send_email(
                 only_over_under=only_over_under
             )
             
-            print("\n✅ SUKCES! Email wysłany.")
-        else:
-            # Komunikat o braku meczów
-            msg_parts = []
-            if only_form_advantage:
-                msg_parts.append("PRZEWAGĄ FORMY")
-            if skip_no_odds:
-                msg_parts.append("KURSAMI")
+            print("\n✅ Email dla GOSPODARZY wysłany!")
+        
+        # EMAIL 2: GOŚCIE (jeśli SEND_SEPARATE_EMAILS)
+        if len(away_rows) > 0 and SEND_SEPARATE_EMAILS and ANALYZE_AWAY_TEAM:
+            print(f"\n📧 KROK 3B/4: Wysyłanie emaila - GOŚCIE 👥...")
+            print("="*70)
             
-            if msg_parts:
-                print(f"\n⚠️  Brak kwalifikujących się meczów z {' i '.join(msg_parts)} - email nie został wysłany")
-            else:
-                print(f"\n⚠️  Brak kwalifikujących się meczów - email nie został wysłany")
+            away_outfn_email = outfn.replace('.csv', '_AWAY.csv')
+            subject = f"[GOŚCIE 👥] {len(away_rows)} kwalifikujących się meczów - {date}"
+            
+            send_email_notification(
+                csv_file=away_outfn_email,
+                to_email=to_email,
+                from_email=from_email,
+                password=password,
+                provider=provider,
+                subject=subject,
+                sort_by=sort_by,
+                only_form_advantage=only_form_advantage,
+                skip_no_odds=skip_no_odds,
+                only_over_under=only_over_under
+            )
+            
+            print("\n✅ Email dla GOŚCI wysłany!")
+        
+        # Komunikat jeśli brak meczów
+        if qualifying_count == 0:
+            print(f"\n⚠️  Brak kwalifikujących się meczów - emaile nie zostały wysłane")
+        
+        # ========== PODSUMOWANIE FINALNE ==========
+        print("\n" + "="*70)
+        print("📊 CAŁKOWITE PODSUMOWANIE")
+        print("="*70)
+        print(f"🏠 Gospodarze: {len(rows)} meczów")
+        print(f"👥 Goście: {len(away_rows)} meczów")
+        print(f"📧 Emaili wysłanych: {(1 if len(rows) > 0 else 0) + (1 if len(away_rows) > 0 and SEND_SEPARATE_EMAILS else 0)}")
+        print("="*70)
         
         # KROK 4: Wyślij dane do aplikacji UI (jeśli skonfigurowane)
         if app_url:
@@ -563,12 +730,38 @@ WAŻNE dla Gmail:
                        help='💰 Wyślij tylko mecze z OVER/UNDER statistics (osobny mail)')
     parser.add_argument('--away-team-focus', action='store_true',
                        help='🏃 Szukaj meczów gdzie GOŚCIE mają >=60%% H2H (zamiast gospodarzy)')
+    
+    # 🆕 NOWE FLAGI DLA TRYBU HOME/AWAY
+    parser.add_argument('--home-only', action='store_true',
+                       help='🏠 Analizuj TYLKO gospodarzy (wyłącza tryb gości)')
+    parser.add_argument('--away-only', action='store_true',
+                       help='👥 Analizuj TYLKO gości (wyłącza tryb gospodarzy)')
+    parser.add_argument('--combined-email', action='store_true',
+                       help='📧 Jeden email dla home+away razem (zamiast osobnych)')
+    
     parser.add_argument('--app-url', default=None,
                        help='URL aplikacji UI do wysyłania danych (np. http://localhost:3000)')
     parser.add_argument('--app-api-key', default=None,
                        help='API key dla aplikacji UI (opcjonalne)')
     
     args = parser.parse_args()
+    
+    # 🆕 Przetwórz flagi home/away
+    global ANALYZE_HOME_TEAM, ANALYZE_AWAY_TEAM, SEND_SEPARATE_EMAILS
+    
+    if args.home_only:
+        ANALYZE_HOME_TEAM = True
+        ANALYZE_AWAY_TEAM = False
+        print("🏠 Tryb: TYLKO GOSPODARZE")
+    
+    if args.away_only:
+        ANALYZE_HOME_TEAM = False
+        ANALYZE_AWAY_TEAM = True
+        print("👥 Tryb: TYLKO GOŚCIE")
+    
+    if args.combined_email:
+        SEND_SEPARATE_EMAILS = False
+        print("📧 Tryb: JEDEN EMAIL (home+away razem)")
     
     scrape_and_send_email(
         date=args.date,
