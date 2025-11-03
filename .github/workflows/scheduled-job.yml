@@ -1,0 +1,24 @@
+name: Scheduled Job at 2:00 UTC
+
+on:
+  schedule:
+    # This runs at 2:00 UTC every day
+    # Format: minute hour day_of_month month day_of_week
+    - cron: '0 2 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  scheduled-task:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Run scheduled task
+        run: |
+          echo "Workflow triggered at 2:00 UTC"
+          echo "Current time: $(date)"
+          # Add your job steps here
