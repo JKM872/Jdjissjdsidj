@@ -1112,9 +1112,9 @@ def extract_team_form(soup: BeautifulSoup, driver: webdriver.Chrome, side: str, 
 
 def extract_betting_odds_with_api(url: str) -> Dict[str, Optional[float]]:
     """
-    Ekstraktuj kursy bukmacherskie używając LiveSport GraphQL API (Nordic Bet).
+    Ekstraktuj kursy bukmacherskie używając LiveSport GraphQL API.
     
-    NOWA METODA - używa oficjalnego API zamiast scrapowania HTML!
+    ULEPSZONA METODA - fallback dla wielu bukmacherów!
     
     Args:
         url: URL meczu z Livesport
@@ -1125,11 +1125,11 @@ def extract_betting_odds_with_api(url: str) -> Dict[str, Optional[float]]:
     try:
         from livesport_odds_api_client import LiveSportOddsAPI
         
-        # Inicjalizuj klienta API (Nordic Bet = 165)
+        # Inicjalizuj klienta API (Nordic Bet = 165 domyślnie)
         client = LiveSportOddsAPI(bookmaker_id="165", geo_ip_code="PL")
         
-        # Pobierz kursy przez API
-        odds = client.get_odds_from_url(url)
+        # Pobierz kursy z fallback (próbuje wielu bukmacherów)
+        odds = client.get_odds_from_url(url, use_fallback=True)
         
         if odds:
             if VERBOSE:
@@ -1143,7 +1143,7 @@ def extract_betting_odds_with_api(url: str) -> Dict[str, Optional[float]]:
             }
         else:
             if VERBOSE:
-                print(f"   ⚠️ API: Brak kursów dla tego meczu")
+                print(f"   ⚠️ API: Brak kursów u żadnego bukmachera")
             return {'home_odds': None, 'away_odds': None}
     
     except ImportError:

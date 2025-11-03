@@ -34,27 +34,40 @@ class LiveSportOddsAPI:
         # Stwórz session (jak w livesportscraper)
         self.session = requests.Session()
         
-        # Nagłówki HTTP (DOKŁADNIE JAK W LIVESPORTSCRAPER - linie 46-55)
+        # Nagłówki HTTP - POPRAWIONE DLA LEPSZEJ DOSTĘPNOŚCI
+        # Symuluje prawdziwy browser z USA (GitHub Actions)
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             'Accept': '*/*',
-            'Accept-Language': 'pl-PL,pl;q=0.9,en;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9,pl;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
             'Origin': 'https://www.livesport.com',
             'Referer': 'https://www.livesport.com/',
-            'sec-ch-ua': '"Google Chrome";v="141", "Not A(Brand";v="8", "Chromium";v="141"',
+            'sec-ch-ua': '"Not A(Brand";v="99", "Chromium";v="121", "Google Chrome";v="121"',
             'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
+            'sec-ch-ua-platform': '"Linux"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'cross-site',
         })
         
-        # Mapowanie ID bukmacherów (najczęściej używane)
+        # Mapowanie ID bukmacherów (ROZSZERZONA LISTA - priorytety od 1=najlepszy)
         self.bookmaker_names = {
-            "165": "Nordic Bet",
-            "16": "bet365",
-            "8": "Unibet",
-            "43": "William Hill",
-            "14": "Bwin",
-            "24": "Betfair",
+            "165": "Nordic Bet",      # Priorytet 1 (najczęściej ma kursy)
+            "16": "bet365",           # Priorytet 2
+            "8": "Unibet",            # Priorytet 3
+            "43": "William Hill",     # Priorytet 4
+            "14": "Bwin",             # Priorytet 5
+            "24": "Betfair",          # Priorytet 6
+            "18": "Pinnacle",         # Priorytet 7
+            "23": "1xBet",            # Priorytet 8
+            "32": "Marathon Bet",     # Priorytet 9
+            "11": "10Bet",            # Priorytet 10
         }
+        
+        # Lista priorytetowa bukmacherów (próbujemy w tej kolejności)
+        self.bookmaker_priority = ["165", "16", "8", "43", "24", "18", "23", "14", "32", "11"]
     
     
     def extract_event_id_from_url(self, url: str) -> Optional[str]:
@@ -85,93 +98,152 @@ class LiveSportOddsAPI:
         return None
     
     
-    def get_odds_for_event(self, event_id: str) -> Optional[Dict]:
+    def get_odds_for_event(self, event_id: str, retry_attempts: int = 3, retry_delay: float = 1.0) -> Optional[Dict]:
         """
         Pobiera kursy bukmacherskie dla konkretnego wydarzenia
         
         UŻYWA PRAWDZIWEGO ENDPOINTA LIVESPORT (odkrytego przez Selenium-Wire)
+        DODANO: retry logic i lepsze error handling
         
         Args:
             event_id: ID wydarzenia z Livesport (np. "KQAaF7d2")
+            retry_attempts: Liczba prób ponownych przy błędzie
+            retry_delay: Opóźnienie między próbami (w sekundach)
         
         Returns:
             Słownik z kursami lub None
         """
         
-        try:
-            # PRAWDZIWE parametry (DOKŁADNIE JAK W LIVESPORTSCRAPER - linie 149-155)
-            params = {
-                '_hash': 'ope2',  # Hash dla kursów ("odds per bookmaker")
-                'eventId': event_id,
-                'bookmakerId': self.bookmaker_id,  # 165 = Nordic Bet
-                'betType': 'HOME_DRAW_AWAY',  # Typ zakładu: 1X2
-                'betScope': 'FULL_TIME'  # Pełen czas (nie połowy)
-            }
-            
-            # GET request do prawdziwego API (UŻYWAMY SESSION - linia 161)
-            response = self.session.get(
-                self.api_url,
-                params=params,
-                timeout=10
-            )
-            
-            # Sprawdź status
-            if response.status_code != 200:
-                print(f"   ⚠️ API ERROR {response.status_code}: {response.text[:200]}")
-            
-            response.raise_for_status()
-            data = response.json()
-            
-            # Parsuj odpowiedź (DOKŁADNIE JAK W LIVESPORTSCRAPER - linie 176-192)
-            if 'data' in data and 'findPrematchOddsForBookmaker' in data['data']:
-                odds_data = data['data']['findPrematchOddsForBookmaker']
-                
-                result = {
-                    'bookmaker_id': self.bookmaker_id,
-                    'bookmaker_name': self.bookmaker_names.get(self.bookmaker_id, 'Nordic Bet'),
-                    'source': 'livesport_api',
-                    'event_id': event_id
+        for attempt in range(retry_attempts):
+            try:
+                # PRAWDZIWE parametry (DOKŁADNIE JAK W LIVESPORTSCRAPER - linie 149-155)
+                params = {
+                    '_hash': 'ope2',  # Hash dla kursów ("odds per bookmaker")
+                    'eventId': event_id,
+                    'bookmakerId': self.bookmaker_id,  # Aktualny bukmacher
+                    'betType': 'HOME_DRAW_AWAY',  # Typ zakładu: 1X2
+                    'betScope': 'FULL_TIME'  # Pełen czas (nie połowy)
                 }
                 
-                # HOME odds
-                if 'home' in odds_data and odds_data['home']:
-                    home_value = odds_data['home'].get('value')
-                    if home_value:
-                        result['home_odds'] = float(home_value)
+                # GET request do prawdziwego API (UŻYWAMY SESSION - linia 161)
+                response = self.session.get(
+                    self.api_url,
+                    params=params,
+                    timeout=15  # Zwiększony timeout dla GitHub Actions
+                )
                 
-                # DRAW odds (może nie istnieć dla niektórych sportów)
-                if 'draw' in odds_data and odds_data['draw']:
-                    draw_value = odds_data['draw'].get('value')
-                    if draw_value:
-                        result['draw_odds'] = float(draw_value)
+                # Sprawdź status
+                if response.status_code != 200:
+                    print(f"   ⚠️ API ERROR {response.status_code} (próba {attempt+1}/{retry_attempts})")
+                    if attempt < retry_attempts - 1:
+                        time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                        continue
                 
-                # AWAY odds
-                if 'away' in odds_data and odds_data['away']:
-                    away_value = odds_data['away'].get('value')
-                    if away_value:
-                        result['away_odds'] = float(away_value)
+                response.raise_for_status()
+                data = response.json()
                 
-                # Sprawdź czy mamy przynajmniej home i away
-                if result.get('home_odds') and result.get('away_odds'):
-                    return result
+                # Parsuj odpowiedź (DOKŁADNIE JAK W LIVESPORTSCRAPER - linie 176-192)
+                if 'data' in data and 'findPrematchOddsForBookmaker' in data['data']:
+                    odds_data = data['data']['findPrematchOddsForBookmaker']
+                    
+                    result = {
+                        'bookmaker_id': self.bookmaker_id,
+                        'bookmaker_name': self.bookmaker_names.get(self.bookmaker_id, f'Bookmaker {self.bookmaker_id}'),
+                        'source': 'livesport_api',
+                        'event_id': event_id
+                    }
+                    
+                    # HOME odds
+                    if 'home' in odds_data and odds_data['home']:
+                        home_value = odds_data['home'].get('value')
+                        if home_value:
+                            result['home_odds'] = float(home_value)
+                    
+                    # DRAW odds (może nie istnieć dla niektórych sportów)
+                    if 'draw' in odds_data and odds_data['draw']:
+                        draw_value = odds_data['draw'].get('value')
+                        if draw_value:
+                            result['draw_odds'] = float(draw_value)
+                    
+                    # AWAY odds
+                    if 'away' in odds_data and odds_data['away']:
+                        away_value = odds_data['away'].get('value')
+                        if away_value:
+                            result['away_odds'] = float(away_value)
+                    
+                    # Sprawdź czy mamy przynajmniej home i away
+                    if result.get('home_odds') and result.get('away_odds'):
+                        return result
+                    else:
+                        # Brak kursów od tego bukmachera - nie próbuj ponownie
+                        return None
+                
+                return None
             
-            return None
+            except requests.exceptions.Timeout:
+                print(f"   ⏱️ Timeout (próba {attempt+1}/{retry_attempts})")
+                if attempt < retry_attempts - 1:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                return None
+            
+            except requests.exceptions.RequestException as e:
+                print(f"   ⚠️ Błąd API request (próba {attempt+1}/{retry_attempts}): {e}")
+                if attempt < retry_attempts - 1:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                return None
+            
+            except (KeyError, ValueError, TypeError) as e:
+                print(f"   ⚠️ Błąd parsowania odpowiedzi API: {e}")
+                return None
         
-        except requests.exceptions.RequestException as e:
-            print(f"   ⚠️ Błąd API request: {e}")
-            return None
-        
-        except (KeyError, ValueError, TypeError) as e:
-            print(f"   ⚠️ Błąd parsowania odpowiedzi API: {e}")
-            return None
+        return None
     
     
-    def get_odds_from_url(self, match_url: str) -> Optional[Dict]:
+    def get_odds_with_fallback(self, event_id: str, max_bookmakers: int = 5) -> Optional[Dict]:
+        """
+        Pobiera kursy próbując wielu bukmacherów (fallback system)
+        
+        NOWA FUNKCJA - próbuje kolejnych bukmacherów jeśli pierwszy nie ma kursów
+        
+        Args:
+            event_id: ID wydarzenia z Livesport
+            max_bookmakers: Maksymalna liczba bukmacherów do sprawdzenia
+        
+        Returns:
+            Słownik z kursami od pierwszego dostępnego bukmachera lub None
+        """
+        original_bookmaker = self.bookmaker_id
+        
+        # Próbuj bukmacherów w kolejności priorytetu
+        for i, bookmaker_id in enumerate(self.bookmaker_priority[:max_bookmakers]):
+            if i > 0:  # Nie loguj dla pierwszego (domyślnego)
+                print(f"   🔄 Fallback: próbuję bukmachera {self.bookmaker_names.get(bookmaker_id, bookmaker_id)}...")
+            
+            self.bookmaker_id = bookmaker_id
+            odds = self.get_odds_for_event(event_id, retry_attempts=2, retry_delay=0.5)
+            
+            if odds:
+                if i > 0:
+                    print(f"   ✅ Znaleziono kursy u: {odds['bookmaker_name']}")
+                # Przywróć oryginalny bookmaker_id (dla następnych wywołań)
+                self.bookmaker_id = original_bookmaker
+                return odds
+        
+        # Nie znaleziono u żadnego bukmachera
+        print(f"   ❌ Brak kursów u żadnego z {max_bookmakers} sprawdzonych bukmacherów")
+        self.bookmaker_id = original_bookmaker
+        return None
+    
+    
+    def get_odds_from_url(self, match_url: str, use_fallback: bool = True) -> Optional[Dict]:
         """
         Pobiera kursy bukmacherskie bezpośrednio z URL meczu
         
         Args:
             match_url: Pełny URL meczu z Livesport
+            use_fallback: Czy używać systemu fallback (wielu bukmacherów)
         
         Returns:
             Słownik z kursami (jak get_odds_for_event) lub None
@@ -189,17 +261,21 @@ class LiveSportOddsAPI:
             print(f"   ⚠️ Nie znaleziono Event ID w URL: {match_url}")
             return None
         
-        # Pobierz kursy dla tego event
-        return self.get_odds_for_event(event_id)
+        # Pobierz kursy - z fallback lub bez
+        if use_fallback:
+            return self.get_odds_with_fallback(event_id, max_bookmakers=5)
+        else:
+            return self.get_odds_for_event(event_id)
     
     
-    def get_over_under_odds(self, event_id: str, sport: str = 'football') -> Optional[Dict]:
+    def get_over_under_odds(self, event_id: str, sport: str = 'football', retry_attempts: int = 2) -> Optional[Dict]:
         """
         Pobiera kursy Over/Under dla wydarzenia
         
         Args:
             event_id: ID wydarzenia z Livesport
             sport: Sport ('football', 'basketball', 'handball', 'volleyball', 'hockey', 'tennis')
+            retry_attempts: Liczba prób ponownych
         
         Returns:
             Słownik z kursami O/U:
@@ -212,78 +288,91 @@ class LiveSportOddsAPI:
                 'line_type': 'goals'
             }
         """
-        try:
-            # Parametry dla Over/Under
-            params = {
-                '_hash': 'ope2',
-                'eventId': event_id,
-                'bookmakerId': self.bookmaker_id,
-                'betType': 'OVER_UNDER',  # Typ zakładu O/U
-                'betScope': 'FULL_TIME'
-            }
-            
-            # GET request
-            response = self.session.get(
-                self.api_url,
-                params=params,
-                timeout=10
-            )
-            
-            if response.status_code != 200:
-                print(f"   ⚠️ API O/U ERROR {response.status_code}: {response.text[:200]}")
-                return None
-            
-            response.raise_for_status()
-            data = response.json()
-            
-            # Parsuj odpowiedź
-            if 'data' in data and 'findPrematchOddsForBookmaker' in data['data']:
-                odds_data = data['data']['findPrematchOddsForBookmaker']
-                
-                result = {
-                    'bookmaker_id': self.bookmaker_id,
-                    'bookmaker_name': self.bookmaker_names.get(self.bookmaker_id, 'Nordic Bet'),
-                    'source': 'livesport_api',
-                    'event_id': event_id
+        for attempt in range(retry_attempts):
+            try:
+                # Parametry dla Over/Under
+                params = {
+                    '_hash': 'ope2',
+                    'eventId': event_id,
+                    'bookmakerId': self.bookmaker_id,
+                    'betType': 'OVER_UNDER',  # Typ zakładu O/U
+                    'betScope': 'FULL_TIME'
                 }
                 
-                # OVER odds
-                if 'over' in odds_data and odds_data['over']:
-                    over_value = odds_data['over'].get('value')
-                    line = odds_data['over'].get('line', '2.5')  # Linia O/U
-                    if over_value:
-                        result['over_odds'] = float(over_value)
-                        result['line'] = str(line)
+                # GET request
+                response = self.session.get(
+                    self.api_url,
+                    params=params,
+                    timeout=15
+                )
                 
-                # UNDER odds
-                if 'under' in odds_data and odds_data['under']:
-                    under_value = odds_data['under'].get('value')
-                    if under_value:
-                        result['under_odds'] = float(under_value)
+                if response.status_code != 200:
+                    if attempt < retry_attempts - 1:
+                        time.sleep(0.5 * (attempt + 1))
+                        continue
+                    return None
                 
-                # Typ linii zależy od sportu
-                if sport == 'football':
-                    result['line_type'] = 'goals'
-                elif sport in ['basketball', 'volleyball']:
-                    result['line_type'] = 'points'
-                elif sport in ['handball', 'hockey']:
-                    result['line_type'] = 'goals'
-                elif sport == 'tennis':
-                    result['line_type'] = 'sets'
+                response.raise_for_status()
+                data = response.json()
                 
-                # Sprawdź czy mamy kursy
-                if result.get('over_odds') and result.get('under_odds'):
-                    return result
+                # Parsuj odpowiedź
+                if 'data' in data and 'findPrematchOddsForBookmaker' in data['data']:
+                    odds_data = data['data']['findPrematchOddsForBookmaker']
+                    
+                    result = {
+                        'bookmaker_id': self.bookmaker_id,
+                        'bookmaker_name': self.bookmaker_names.get(self.bookmaker_id, f'Bookmaker {self.bookmaker_id}'),
+                        'source': 'livesport_api',
+                        'event_id': event_id
+                    }
+                    
+                    # OVER odds
+                    if 'over' in odds_data and odds_data['over']:
+                        over_value = odds_data['over'].get('value')
+                        line = odds_data['over'].get('line', '2.5')  # Linia O/U
+                        if over_value:
+                            result['over_odds'] = float(over_value)
+                            result['line'] = str(line)
+                    
+                    # UNDER odds
+                    if 'under' in odds_data and odds_data['under']:
+                        under_value = odds_data['under'].get('value')
+                        if under_value:
+                            result['under_odds'] = float(under_value)
+                    
+                    # Typ linii zależy od sportu
+                    if sport == 'football':
+                        result['line_type'] = 'goals'
+                    elif sport in ['basketball', 'volleyball']:
+                        result['line_type'] = 'points'
+                    elif sport in ['handball', 'hockey']:
+                        result['line_type'] = 'goals'
+                    elif sport == 'tennis':
+                        result['line_type'] = 'sets'
+                    
+                    # Sprawdź czy mamy kursy
+                    if result.get('over_odds') and result.get('under_odds'):
+                        return result
+                
+                return None
             
-            return None
+            except requests.exceptions.Timeout:
+                if attempt < retry_attempts - 1:
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                return None
+            
+            except requests.exceptions.RequestException as e:
+                if attempt < retry_attempts - 1:
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                return None
+            
+            except (KeyError, ValueError, TypeError) as e:
+                print(f"   ⚠️ Błąd parsowania O/U: {e}")
+                return None
         
-        except requests.exceptions.RequestException as e:
-            print(f"   ⚠️ Błąd API O/U request: {e}")
-            return None
-        
-        except (KeyError, ValueError, TypeError) as e:
-            print(f"   ⚠️ Błąd parsowania O/U: {e}")
-            return None
+        return None
     
     
     def get_btts_odds(self, event_id: str) -> Optional[Dict]:
